@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools"]
+
+[project]
+name = "bsc_ops_admin"
+version = "0.0.1"
+description = "BSC Ops Admin"
+authors = [{ name = "Micah Carroll", email = "mdc@berkeley.edu" }]
+# Dynamically include the README file, as specified in the `tool.setuptools.dynamic` section.
+dynamic = ["readme"]
+dependencies = [
+    "google-auth-oauthlib",
+    "google-api-python-client",
+    "pandas",
+    "python-dotenv",
+]
+
+[tool.setuptools.dynamic]
+readme = { file = ["README.md"], content-type = "text/markdown" }
+
+[project.optional-dependencies]
+dev = ["black", "flake8", "pep8-naming", "mypy", "pytest", "isort"]
+
+[tool.black]
+line-length = 120
+include = '\.pyi?$' # Includes .pyi stub files
+exclude = '''
+/(
+    tmp
+)
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 120
+src_paths = ["bsc_ops_admin"]
+known_first_party = ["bsc_ops_admin"]
+known_third_party = ["ray", "torch", "wandb"]
+skip = ["experiments/test.py", "tmp"]
+
+# Should look into the below more
+[tool.pytest.ini_options]
+timeout = 60
+testpaths = ["tests"]
+markers = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["bsc_ops_admin*"]
+exclude = ["experiments*"]
