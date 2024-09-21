@@ -1,0 +1,9 @@
+Hello {first_name},
+
+Because you breached the terms of your conditional contract by reaching more than 15 workshift down hours again, your BSC contract and membership are being terminated, effective {date_15days}. Attached is a Fifteen Day Notice of Pending Membership and Contract Termination.
+
+You may attempt to appeal this termination by submitting a request to the Administrative Committee (AdCom). Please review the Adcom Guide for Workshift for more information on how to submit a request. Absent a successful appeal, your termination will become effective and you are expected to move out on {date_15days}.  Please be advised that this appeal is your last chance to avoid workshift termination. 
+
+Best,
+Operations Team
+Berkeley Student Cooperative

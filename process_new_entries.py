@@ -12,6 +12,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 from google.auth.transport.requests import Request
@@ -22,8 +23,7 @@ from googleapiclient.http import MediaIoBaseDownload
 # If modifying these scopes, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
-# The ID and range of a sample spreadsheet.
-SAMPLE_SPREADSHEET_ID = "1WiH7RSZe3pjc87PvF1Qp1gUzqC7aVXxTpEwwnRzXr6Y"
+SPREADSHEET_ID = "1WiH7RSZe3pjc87PvF1Qp1gUzqC7aVXxTpEwwnRzXr6Y"
 POTENTIAL_TERMINATION_NOTICE_DOCUMENT_ID = "1nnFIcC3429tWAq9ihA9ZHv86S78zEPKwht8IT3MLios"
 CONDITIONAL_CONTRACT_DOCUMENT_ID = "1buFyhb4m7hXia-6uH5PI7eipaVsKPsv7u-z14OJxnwM"
 OPS_SUPERVISOR = "Alex"
@@ -31,8 +31,20 @@ SEMESTER_YEAR = "Fall 2024"  # TODO: make this dynamic
 SAMPLE_RANGE_NAME = "sheet1!A:O"
 SAFE_MODE = True
 
-ENV_FOLDER = Path(__file__).parent.parent / ".env"
-TEMPLATE_FOLDER = Path(__file__).parent.parent / "templates"
+ENV_FOLDER = Path(__file__).parent / ".env"
+TEMPLATE_FOLDER = Path(__file__).parent / "templates"
+
+COL_LAST_NAME = "C"
+COL_FIRST_NAME = "D"
+COL_EMAIL = "E"
+COL_HOUSE = "F"
+COL_EXISTING_CC = "H"
+COL_ACTION = "I"
+
+POTENTIAL_TERMINATION_ACTION = "Potential Termination Notice"
+PENDING_TERMINATION_ACTION = "Pending Termination Notice"
+COURTESY_NOTICE_ACTION = "Courtesy Notice"
+
 
 # Load environment variables from .env file
 load_dotenv(ENV_FOLDER / ".env")
@@ -60,7 +72,7 @@ def get_sheet(creds):
 
 
 def get_df(sheet, only_action_null=True):
-    result = sheet.values().get(spreadsheetId=SAMPLE_SPREADSHEET_ID, range=SAMPLE_RANGE_NAME).execute()
+    result = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range=SAMPLE_RANGE_NAME).execute()
     values = result.get("values", [])
 
     df = pd.DataFrame(values)
@@ -71,6 +83,7 @@ def get_df(sheet, only_action_null=True):
         df = df[df["Action"].isnull()]
         assert len(df) < 5, "Something is fishy, there are more than 5 rows with no action?"
 
+    df["Member's Down Hours"] = df["Member's Down Hours"].replace("", np.nan).astype(float)
     return df
 
 
@@ -78,7 +91,7 @@ def update_cell(sheet, col, idx, value):
     return (
         sheet.values()
         .update(
-            spreadsheetId=SAMPLE_SPREADSHEET_ID,
+            spreadsheetId=SPREADSHEET_ID,
             range=f"sheet1!{col}{idx+1}",
             valueInputOption="USER_ENTERED",
             body={"values": [[value]], "majorDimension": "COLUMNS"},
@@ -87,95 +100,45 @@ def update_cell(sheet, col, idx, value):
     )
 
 
-def fill_house(sheet):
-    df = get_df(sheet)
-    for i in range(0, len(df)):
-        entry = df.iloc[i]
-        if entry["House"].strip() == "":
-            first_name = entry["Member's First Name"]
-            last_name = entry["Member's Last Name"]
-            house_code = entry["Email Address"][0:3].upper()
-            print(f"Updating house for {first_name} {last_name} to {house_code}")
-            update_cell(sheet, "F", entry.name, house_code)
+def get_house_code(row):
+    house_code = row["Email Address"][0:3].upper().strip()
+    return house_code
 
 
 def get_email(ppl, first_name, last_name):
     return ppl.loc[(ppl["Last Name"] == last_name) & (ppl["First Name"] == first_name)]["Permanent Email"].values[0]
 
 
-def capitalize_names(sheet):
-    df = get_df(sheet)
-    for i in range(0, len(df)):
-        entry = df.iloc[i]
-        first_name = entry["Member's First Name"]
-        last_name = entry["Member's Last Name"]
-        if last_name != last_name.title():
-            print(f"Updating last name for {first_name} {last_name} to {last_name.title()}")
-            update_cell(sheet, "C", entry.name, last_name.title())
-        if first_name != first_name.title():
-            print(f"Updating last name for {first_name} {last_name} to {last_name.title()}")
-            update_cell(sheet, "D", entry.name, first_name.title())
+def get_capitalized_names(row):
+    first_name = row["Member's First Name"]
+    last_name = row["Member's Last Name"]
+    return first_name.title(), last_name.title()
 
 
-def fill_existing_contract(sheet):
-    df = get_df(sheet)
-    for i in range(0, len(df)):
-        entry = df.iloc[i]
-        member_email = entry["Member's Email"]
-        member_first_name = entry["Member's First Name"]
-        member_last_name = entry["Member's Last Name"]
-
-        if member_email is not None:
-            print(member_email)
-            if "@" in member_email:
-                full_df = get_df(sheet, only_action_null=False)
-                to_check = full_df.iloc[0 : entry.name]
-                # TODO: is this actually the right way to do this?
-                to_check = to_check.query("`Member's Email` == @member_email")
-                to_check["Member's Down Hours"] = to_check["Member's Down Hours"].astype(float)
-                to_check = to_check.query("`Member's Down Hours` >= 15")
-                if len(to_check) >= 2:
-                    assert False, "This part of the code has not been tested"
-                    existing_contract = "Yes"
-                else:
-                    existing_contract = "No"
-            # else:
-            #     assert False, "This part of the code has not been tested"
-            #     to_check = df.iloc[0 : entry.name]
-            #     to_check = to_check.loc[
-            #         (to_check["Member's Down Hours"] >= 15)
-            #         & (to_check["Member's First Name"] == member_first_name)
-            #         & (to_check["Member's Last Name"] == member_last_name)
-            #     ]
-            #     if len(to_check) >= 2:
-            #         existing_contract = "Yes"
-            #     else:
-            #         existing_contract = "No"
-
-            print(f"Updating existing CC cell for {member_first_name} {member_last_name} to {existing_contract}")
-            update_cell(sheet, "H", entry.name, existing_contract)
+def has_existing_conditional_contract(row, full_df):
+    member_email = row["Member's Email"].strip()
+    assert "@" in member_email, f"Member email {member_email} is not valid"
+    to_check = full_df.iloc[0 : row.name]
+    # TODO: is this actually the right way to do this?
+    prior_large_down_hours = to_check[
+        (to_check["Member's Email"] == member_email) & (to_check["Member's Down Hours"] >= 15)
+    ]
+    existing_contract = "Yes" if len(prior_large_down_hours) >= 2 else "No"
+    return existing_contract, member_email
 
 
-def fill_action(sheet):
-    """Updates the spreadsheet to say that the action has been taken"""
-    df = get_df(sheet)
-    for i in range(0, len(df)):
-        entry = df.iloc[i]
-        action = entry["Action"]
-        down_hours = entry["Member's Down Hours"]
-        existing_cc = entry["Existing CC"]
-        if action is None or action == "":
-            if float(down_hours) >= 15:
-                assert False, "This part of the code has not been tested"
-                if existing_cc.strip() == "Yes":
-                    action = "Pending Termination Notice"
-                elif existing_cc.strip() == "No":
-                    action = "Potential Termination Notice"
-                else:
-                    action = ""
-            else:
-                action = "Courtesy Notice"
-            update_cell(sheet, "I", entry.name, action)
+def get_action(row, existing_cc):
+    down_hours = row["Member's Down Hours"]
+    if float(down_hours) >= 15:
+        if existing_cc == "Yes":
+            action = PENDING_TERMINATION_ACTION
+        elif existing_cc == "No":
+            action = POTENTIAL_TERMINATION_ACTION
+        else:
+            raise ValueError(f"Existing CC should only be 'Yes' or 'No', it is {existing_cc}")
+    else:
+        action = COURTESY_NOTICE_ACTION
+    return action
 
 
 def find_email_if_not_found(sheet):
@@ -189,10 +152,10 @@ def find_email_if_not_found(sheet):
                 last_name = df.iloc[i]["Member's Last Name"]
                 email = get_email(ppl, first_name, last_name)
                 print(email)
-                update_cell(sheet, "E", df.iloc[i].name, email)
+                update_cell(sheet, COL_EMAIL, df.iloc[i].name, email)
             except Exception as e:
                 print(first_name, last_name, e)
-                update_cell(sheet, "E", df.iloc[i].name, "NOT FOUND")
+                update_cell(sheet, COL_EMAIL, df.iloc[i].name, "NOT FOUND")
 
 
 def delete_file(service, file_id):
@@ -297,50 +260,66 @@ def open_pdf_in_preview(pdf_path):
 if __name__ == "__main__":
     creds = get_credentials()
     sheet = get_sheet(creds)
-    fill_house(sheet)
-    capitalize_names(sheet)
-    fill_existing_contract(sheet)
-
+    full_df = get_df(sheet, only_action_null=False)
     df = get_df(sheet)
+
     # If save mode, ask user to confirm if the amount seems right
     if SAFE_MODE:
         input(f"There are {len(df)} unprocessed entries in the spreadsheet. Press Enter to continue")
 
     # Example usage
-    for i in range(0, len(df)):
-        entry = df.iloc[i]
-        first_name = entry["Member's First Name"].strip()
-        last_name = entry["Member's Last Name"].strip()
-        house = entry["House"].strip()
-        member_email = entry["Member's Email"].strip()
-        workshift_manager_email = entry["Email Address"].strip()
+    for i, row in df.iterrows():
+        house_code = get_house_code(row)
+        member_first_name, member_last_name = get_capitalized_names(row)
+        existing_contract, member_email = has_existing_conditional_contract(row, full_df)
+        action = get_action(row, existing_contract)
+        workshift_manager_email = row["Email Address"].strip()
+        print(f"Action for {member_first_name} {member_last_name} is {action}")
         date_today = datetime.now().strftime("%m/%d/%Y")
         date_7days = (datetime.now() + timedelta(days=7)).strftime("%m/%d/%Y")
         date_15days = (datetime.now() + timedelta(days=15)).strftime("%m/%d/%Y")
-        form_data = {
-            "<FIRST NAME>": first_name,
-            "<FULL NAME>": f"{first_name} {last_name}",
-            "<HOUSE>": house,
-            "<DATE>": date_today,
-            "<DATE (+1 week)>": date_7days,
-            "<DATE (+15 days)>": date_15days,
-            "<SEMESTER, YEAR>": SEMESTER_YEAR,
-        }
 
-        cc_output_pdf = f"cc_{first_name}_{last_name}.pdf"
-        fill_pdf(cc_output_pdf, form_data, CONDITIONAL_CONTRACT_DOCUMENT_ID)
-        print(f"PDF form filled and saved as {cc_output_pdf}")
+        if action == POTENTIAL_TERMINATION_ACTION:
 
-        potential_termination_output_pdf = f"potential_termination_{first_name}_{last_name}.pdf"
-        fill_pdf(potential_termination_output_pdf, form_data, POTENTIAL_TERMINATION_NOTICE_DOCUMENT_ID)
-        print(f"PDF form filled and saved as {potential_termination_output_pdf}")
+            form_data = {
+                "<FIRST NAME>": member_first_name,
+                "<FULL NAME>": f"{member_first_name} {member_last_name}",
+                "<HOUSE>": house_code,
+                "<DATE>": date_today,
+                "<DATE (+1 week)>": date_7days,
+                "<DATE (+15 days)>": date_15days,
+                "<SEMESTER, YEAR>": SEMESTER_YEAR,
+            }
 
-        pdf_attachments = [cc_output_pdf, potential_termination_output_pdf]
+            cc_output_pdf = f"cc_{member_first_name}_{member_last_name}.pdf"
+            fill_pdf(cc_output_pdf, form_data, CONDITIONAL_CONTRACT_DOCUMENT_ID)
+            print(f"PDF form filled and saved as {cc_output_pdf}")
 
-        subject = "15-Day Notice of Potential Membership Termination"
-        # Load the email template from the file
-        with open(TEMPLATE_FOLDER / "cc_email_template.txt", "r") as file:
-            body = file.read().format_map(locals())
+            potential_termination_output_pdf = f"potential_termination_{member_first_name}_{member_last_name}.pdf"
+            fill_pdf(potential_termination_output_pdf, form_data, POTENTIAL_TERMINATION_NOTICE_DOCUMENT_ID)
+            print(f"PDF form filled and saved as {potential_termination_output_pdf}")
+
+            pdf_attachments = [cc_output_pdf, potential_termination_output_pdf]
+
+            subject = "15-Day Notice of Potential Membership Termination"
+            # Load the email template from the file
+            with open(TEMPLATE_FOLDER / "potential_termination_email_template.txt", "r") as file:
+                body = file.read().format_map(
+                    {
+                        "first_name": member_first_name,
+                        "date_15days": date_15days,
+                        "date_7days": date_7days,
+                        "OPS_SUPERVISOR": OPS_SUPERVISOR,
+                    }
+                )
+        elif action == PENDING_TERMINATION_ACTION:
+            subject = "[URGENT] 15 Day Notice of Pending Contract and Membership Termination"
+            with open(TEMPLATE_FOLDER / "pending_termination_email_template.txt", "r") as file:
+                body = file.read().format_map(locals())
+        elif action == COURTESY_NOTICE_ACTION:
+            subject = "Down 10+ hours - Courtesy Notice"
+            with open(TEMPLATE_FOLDER / "courtesy_notice_email_template.txt", "r") as file:
+                body = file.read().format_map(locals())
 
         if SAFE_MODE:
             open_pdf_in_preview(cc_output_pdf)
@@ -348,7 +327,18 @@ if __name__ == "__main__":
             input(
                 f"About to send email to {member_email} and {workshift_manager_email}.\n\nSubject: {subject}\n\nBody:\n{body}\n\nAttachments: {', '.join(os.path.basename(path) for path in pdf_attachments)}\n\nPress Enter to continue"
             )
+
         send_email(member_email, [workshift_manager_email], subject, body, pdf_attachments)
 
-        # This should only be done once the email is sent
-        fill_action(sheet)
+        spreadsheet_items_to_update = {
+            COL_HOUSE: house_code,
+            COL_LAST_NAME: member_last_name,
+            COL_FIRST_NAME: member_first_name,
+            COL_EXISTING_CC: existing_contract,
+            COL_ACTION: action,
+        }
+        print(f"Updated spreadsheet values: {spreadsheet_items_to_update}")
+
+        for col, value in spreadsheet_items_to_update.items():
+            print(f"Updating {member_first_name} {member_last_name} col {col} to {value}")
+            update_cell(sheet, col, row.name, value)
