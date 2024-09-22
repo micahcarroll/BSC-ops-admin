@@ -311,7 +311,7 @@ def get_reinstatement_eligibility_suffix(member_first_name, member_last_name):
     return eligibility_suffix, prior_termination_reason
 
 
-def update_15_day_notice_spreadsheet(sheets_service, member_data, date_15days):
+def update_15_day_notice_spreadsheet(sheets_service, format_data):
     spreadsheet_id = DOCUMENT_IDS["15_day_notice_spreadsheet"]
 
     # First, insert a new row after the header row
@@ -382,7 +382,7 @@ def update_15_day_notice_spreadsheet(sheets_service, member_data, date_15days):
 
 
 def update_down_hours_spreadsheet(
-    sheets_service, house_code, member_first_name, member_last_name, had_prior_CC, action, date_today
+    sheets_service, row, house_code, member_first_name, member_last_name, had_prior_CC, action, date_today
 ):
     spreadsheet_items_to_update = {
         COL_HOUSE: house_code,
@@ -399,9 +399,115 @@ def update_down_hours_spreadsheet(
         update_down_hours_spreadsheet_cell(sheets_service, col, row.name, value)
 
 
-if __name__ == "__main__":
-    creds = get_credentials()
-    services = get_google_services(creds)
+def process_new_down_hour_entry(services, row, templates, full_df):
+    house_code = get_house_code(row)
+    member_first_name, member_last_name = get_capitalized_names(row)
+    had_prior_CC, member_email = had_prior_conditional_contract(row, full_df)
+    action = get_action(row, had_prior_CC)
+    workshift_manager_email = row["Email Address"].strip()
+
+    print(f"Action for {member_first_name} {member_last_name} is {action}")
+    date_today = datetime.now().strftime("%m/%d/%Y")
+    date_7days = (datetime.now() + timedelta(days=7)).strftime("%m/%d/%Y")
+    date_15days = (datetime.now() + timedelta(days=15)).strftime("%m/%d/%Y")
+    format_data = {
+        "<FIRST NAME>": member_first_name,
+        "<LAST NAME>": member_last_name,
+        "<FULL NAME>": f"{member_first_name} {member_last_name}",
+        "<HOUSE>": house_code,
+        "<DATE>": date_today,
+        "<DATE (+1 week)>": date_7days,
+        "<DATE (+15 days)>": date_15days,
+        "<SEMESTER, YEAR>": SEMESTER_YEAR,
+        "<OPS_SUPERVISOR>": OPS_SUPERVISOR,
+        "<EMAIL>": member_email,
+        "<ACTION>": action,
+    }
+
+    if action == POTENTIAL_TERMINATION_ACTION:
+        # Get from input whether member is eligible for reinstatement, default to eligible
+        eligibility_suffix, prior_termination_reason = get_reinstatement_eligibility_suffix(
+            member_first_name, member_last_name
+        )
+        if prior_termination_reason is not None:
+            format_data["<PRIOR TERMINATION REASON>"] = prior_termination_reason
+
+        document_id = DOCUMENT_IDS["conditional_contract"]
+        cc_pdf = f"cc_{member_first_name}_{member_last_name}.pdf"
+        fill_pdf(services, cc_pdf, format_data, document_id)
+
+        document_id = DOCUMENT_IDS[f"potential_termination_reinstatement_{eligibility_suffix}"]
+        potential_termination_pdf = f"potential_termination_{member_first_name}_{member_last_name}.pdf"
+        fill_pdf(services, potential_termination_pdf, format_data, document_id)
+
+        pdf_attachments = [cc_pdf, potential_termination_pdf]
+
+        subject, body = get_email_template(templates, action)
+
+    elif action == PENDING_TERMINATION_ACTION:
+        eligibility_suffix, prior_termination_reason = get_reinstatement_eligibility_suffix(
+            member_first_name, member_last_name
+        )
+        if prior_termination_reason is not None:
+            format_data["<PRIOR TERMINATION REASON>"] = prior_termination_reason
+
+        document_id = DOCUMENT_IDS[f"pending_termination_notice_reinstatement_{eligibility_suffix}"]
+        pending_termination_pdf = f"pending_termination_{member_first_name}_{member_last_name}.pdf"
+        fill_pdf(services, pending_termination_pdf, format_data, document_id)
+
+        pdf_attachments = [pending_termination_pdf]
+
+        subject, body = get_email_template(templates, action)
+
+    elif action == COURTESY_NOTICE_ACTION:
+        pdf_attachments = []
+
+        subject, body = get_email_template(templates, action)
+
+    # Format the body. Wrap all < > with {} in body and then use formatting
+    body = body.replace("<", "{<").replace(">", ">}").format_map(format_data)
+
+    if SAFE_MODE:
+        if action == POTENTIAL_TERMINATION_ACTION:
+            open_pdf_in_preview(cc_pdf)
+            open_pdf_in_preview(potential_termination_pdf)
+        elif action == PENDING_TERMINATION_ACTION:
+            open_pdf_in_preview(pending_termination_pdf)
+        input(
+            f"About to send email to {member_email} and {workshift_manager_email}.\n\nSubject: {subject}\n\nBody:\n{body}\n\nAttachments: {', '.join(os.path.basename(path) for path in pdf_attachments)}\n\nPress Enter to continue"
+        )
+
+    assert "{" not in body and "}" not in body, "Body has { or } in it, probably formatting failed"
+    assert "<" not in body and ">" not in body, "Body has < or > in it, which are not formatted properly"
+
+    ####################################################
+    # Start doing the actual work that modifies things #
+    ####################################################
+
+    # Update 15 day notice spreadsheet
+    if action == POTENTIAL_TERMINATION_ACTION or action == PENDING_TERMINATION_ACTION:
+        print(f"Updating 15 day notice spreadsheet for {member_first_name} {member_last_name}")
+        update_15_day_notice_spreadsheet(services["sheets"], format_data)
+
+    for pdf_path in pdf_attachments:
+        print(f"Uploading {pdf_path} to Google Drive")
+        drive_file_id = upload_to_drive(services["drive"], pdf_path, PDFS_FOLDER_ID)
+        print(f"Uploaded {pdf_path} to Google Drive with file ID: {drive_file_id}")
+
+    # Actually send the email
+    print(f"Sending email to {member_email} and {workshift_manager_email}")
+    send_email(member_email, [workshift_manager_email], subject, body, pdf_attachments)
+    print("Email sent.")
+
+    # Update down hours spreadsheet
+    update_down_hours_spreadsheet(
+        services["sheets"], row, house_code, member_first_name, member_last_name, had_prior_CC, action, date_today
+    )
+
+    print(f"Finished everything for {member_first_name} {member_last_name}")
+
+
+def process_new_down_hour_entries(services):
     full_df = get_down_hours_df(services["sheets"], only_action_null=False)
     df = get_down_hours_df(services["sheets"])
     templates = extract_email_templates(services["docs"])
@@ -409,109 +515,10 @@ if __name__ == "__main__":
     print(f"There are {len(df)} rows to process")
 
     # Example usage
-    for i, row in df.iterrows():
-        house_code = get_house_code(row)
-        member_first_name, member_last_name = get_capitalized_names(row)
-        had_prior_CC, member_email = had_prior_conditional_contract(row, full_df)
-        action = get_action(row, had_prior_CC)
-        workshift_manager_email = row["Email Address"].strip()
+    for _, row in df.iterrows():
+        process_new_down_hour_entry(services, row, templates, full_df)
 
-        print(f"Action for {member_first_name} {member_last_name} is {action}")
-        date_today = datetime.now().strftime("%m/%d/%Y")
-        date_7days = (datetime.now() + timedelta(days=7)).strftime("%m/%d/%Y")
-        date_15days = (datetime.now() + timedelta(days=15)).strftime("%m/%d/%Y")
-        format_data = {
-            "<FIRST NAME>": member_first_name,
-            "<LAST NAME>": member_last_name,
-            "<FULL NAME>": f"{member_first_name} {member_last_name}",
-            "<HOUSE>": house_code,
-            "<DATE>": date_today,
-            "<DATE (+1 week)>": date_7days,
-            "<DATE (+15 days)>": date_15days,
-            "<SEMESTER, YEAR>": SEMESTER_YEAR,
-            "<OPS_SUPERVISOR>": OPS_SUPERVISOR,
-            "<EMAIL>": member_email,
-            "<ACTION>": action,
-        }
 
-        if action == POTENTIAL_TERMINATION_ACTION:
-            # Get from input whether member is eligible for reinstatement, default to eligible
-            eligibility_suffix, prior_termination_reason = get_reinstatement_eligibility_suffix(
-                member_first_name, member_last_name
-            )
-            if prior_termination_reason is not None:
-                format_data["<PRIOR TERMINATION REASON>"] = prior_termination_reason
-
-            document_id = DOCUMENT_IDS["conditional_contract"]
-            cc_pdf = f"cc_{member_first_name}_{member_last_name}.pdf"
-            fill_pdf(services, cc_pdf, format_data, document_id)
-
-            document_id = DOCUMENT_IDS[f"potential_termination_reinstatement_{eligibility_suffix}"]
-            potential_termination_pdf = f"potential_termination_{member_first_name}_{member_last_name}.pdf"
-            fill_pdf(services, potential_termination_pdf, format_data, document_id)
-
-            pdf_attachments = [cc_pdf, potential_termination_pdf]
-
-            subject, body = get_email_template(templates, action)
-
-        elif action == PENDING_TERMINATION_ACTION:
-            eligibility_suffix, prior_termination_reason = get_reinstatement_eligibility_suffix(
-                member_first_name, member_last_name
-            )
-            if prior_termination_reason is not None:
-                format_data["<PRIOR TERMINATION REASON>"] = prior_termination_reason
-
-            document_id = DOCUMENT_IDS[f"pending_termination_notice_reinstatement_{eligibility_suffix}"]
-            pending_termination_pdf = f"pending_termination_{member_first_name}_{member_last_name}.pdf"
-            fill_pdf(services, pending_termination_pdf, format_data, document_id)
-
-            pdf_attachments = [pending_termination_pdf]
-
-            subject, body = get_email_template(templates, action)
-
-        elif action == COURTESY_NOTICE_ACTION:
-            pdf_attachments = []
-
-            subject, body = get_email_template(templates, action)
-
-        # Format the body. Wrap all < > with {} in body and then use formatting
-        body = body.replace("<", "{<").replace(">", ">}").format_map(format_data)
-
-        if SAFE_MODE:
-            if action == POTENTIAL_TERMINATION_ACTION:
-                open_pdf_in_preview(cc_pdf)
-                open_pdf_in_preview(potential_termination_pdf)
-            elif action == PENDING_TERMINATION_ACTION:
-                open_pdf_in_preview(pending_termination_pdf)
-            input(
-                f"About to send email to {member_email} and {workshift_manager_email}.\n\nSubject: {subject}\n\nBody:\n{body}\n\nAttachments: {', '.join(os.path.basename(path) for path in pdf_attachments)}\n\nPress Enter to continue"
-            )
-
-        assert "{" not in body and "}" not in body, "Body has { or } in it, probably formatting failed"
-        assert "<" not in body and ">" not in body, "Body has < or > in it, which are not formatted properly"
-
-        ####################################################
-        # Start doing the actual work that modifies things #
-        ####################################################
-
-        # Update 15 day notice spreadsheet
-        if action == POTENTIAL_TERMINATION_ACTION or action == PENDING_TERMINATION_ACTION:
-            print(f"Updating 15 day notice spreadsheet for {member_first_name} {member_last_name}")
-            update_15_day_notice_spreadsheet(services["sheets"], format_data, date_15days)
-
-        for pdf_path in pdf_attachments:
-            print(f"Uploading {pdf_path} to Google Drive")
-            drive_file_id = upload_to_drive(services["drive"], pdf_path, PDFS_FOLDER_ID)
-            print(f"Uploaded {pdf_path} to Google Drive with file ID: {drive_file_id}")
-
-        # Actually send the email
-        print(f"Sending email to {member_email} and {workshift_manager_email}")
-        send_email(member_email, [workshift_manager_email], subject, body, pdf_attachments)
-        print("Email sent.")
-
-        # Update down hours spreadsheet
-        update_down_hours_spreadsheet(
-            services["sheets"], house_code, member_first_name, member_last_name, had_prior_CC, action, date_today
-        )
-
-        print(f"Finished everything for {member_first_name} {member_last_name}")
+if __name__ == "__main__":
+    creds = get_credentials()
+    services = get_google_services(creds)
