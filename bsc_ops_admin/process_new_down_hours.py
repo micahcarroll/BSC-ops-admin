@@ -15,6 +15,7 @@ import pandas as pd
 from bsc_ops_admin.utils import get_credentials, get_current_semester_year, get_google_services, upload_to_drive
 from googleapiclient.http import MediaIoBaseDownload
 
+# https://docs.google.com/document/d/1jcCLkLd58psZyZLxnFHAfEpOCuROOslcfz0qMJrAxDI/edit
 DOCUMENT_IDS = {
     "potential_termination_reinstatement_eligible": "1nnFIcC3429tWAq9ihA9ZHv86S78zEPKwht8IT3MLios",
     "potential_termination_reinstatement_ineligible": "1GycmYHjtUybWNmv7M8io1umcfIOUjtAqi1MeetLulpI",

@@ -30,3 +30,5 @@ python -m bsc_ops_admin.process_new_entries
 - Have an automated email every 2 weeks to workshift managers reminding them to fill out down hours
 - Have member ID be filled in the 15 day notice spreadsheet
 - Have nicer formatting dict, where you automatically add the < > tags around the keys and maybe add underscores for all keys? I think having some kind of class for this would be nice.
+- Track returned conditional contracts. Automatically parse the email members send to ops admin to return the conditional contract.
+- Maybe send reminder emails to people who haven't submitted their conditional contracts yet.
