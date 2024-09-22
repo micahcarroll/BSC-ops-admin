@@ -28,3 +28,4 @@ python -m bsc_ops_admin.process_new_entries
 - Add a schedule-send email after the 15 day notice is up, to ops admin? Or maybe have it schedule a job for 15 days later that checks whether it was done
 - Add better handling of people eligible for reinstatement (ask Alex for a list of terminated people and the reasons why they were terminated). Document how that was obtained.
 - Have an automated email every 2 weeks to workshift managers reminding them to fill out down hours
+- Have member ID be filled in the 15 day notice spreadsheet

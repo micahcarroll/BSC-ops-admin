@@ -335,13 +335,14 @@ def update_15_day_notice_spreadsheet(sheets_service, member_data, date_15days):
         "<HOUSE>": "E",
         "<DATE>": "F",
         "<DATE (+15 days)>": "G",
+        "<CURRENT REASON>": "H",
         "<ACTION>": "I",
     }
 
     # Prepare the update requests
     requests = []
     for data_key, column in COLUMNS_BY_DATA.items():
-        if data_key == "WORKSHIFT":
+        if data_key == "<CURRENT REASON>":
             value = "Workshift"
         elif data_key == "<ACTION>":
             action = format_data[data_key]
