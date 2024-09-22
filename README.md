@@ -19,3 +19,6 @@ Other steps:
 ```
 python -m bsc_ops_admin.process_new_entries
 ```
+
+# TODOs
+- Add a test that checks all conditions run without errors
