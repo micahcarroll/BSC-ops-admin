@@ -12,7 +12,7 @@ from email.mime.text import MIMEText
 
 import numpy as np
 import pandas as pd
-from bsc_ops_admin.utils import get_credentials, get_current_semester_year, get_google_services
+from bsc_ops_admin.utils import get_credentials, get_current_semester_year, get_google_services, upload_to_drive
 from googleapiclient.http import MediaIoBaseDownload
 
 DOCUMENT_IDS = {
@@ -22,8 +22,11 @@ DOCUMENT_IDS = {
     "pending_termination_notice_reinstatement_ineligible": "1g-n1s12abiYaBiQGkFbqbyUnrwtdwe3oKcrgvj3ZLuA",
     "conditional_contract": "1buFyhb4m7hXia-6uH5PI7eipaVsKPsv7u-z14OJxnwM",
     "down_hours_spreadsheet": "1WiH7RSZe3pjc87PvF1Qp1gUzqC7aVXxTpEwwnRzXr6Y",
+    "15_day_notice_spreadsheet": "16c6VvfbFV3JlnrVL-jw1q_FtHVFql_04Ww__4BsWLjQ",
     "instruction_docs": "1jcCLkLd58psZyZLxnFHAfEpOCuROOslcfz0qMJrAxDI",
 }
+
+PDFS_FOLDER_ID = "1At4TzVjKsN2Zv5LKCFpbeu2DiRQ6FXSg"
 
 COURTESY_NOTICE_ACTION = "Courtesy Notice"
 POTENTIAL_TERMINATION_ACTION = "Potential Termination Notice"
@@ -72,7 +75,7 @@ def get_down_hours_df(sheets_service, only_action_null=True):
     return df
 
 
-def update_cell(sheets_service, col, idx, value):
+def update_down_hours_spreadsheet_cell(sheets_service, col, idx, value):
     down_hours_spreadsheet_id = DOCUMENT_IDS["down_hours_spreadsheet"]
     return (
         sheets_service.spreadsheets()
@@ -141,10 +144,10 @@ def find_email_if_not_found(sheet):
                 last_name = df.iloc[i]["Member's Last Name"]
                 email = get_email(ppl, first_name, last_name)
                 print(email)
-                update_cell(sheet, COL_EMAIL, df.iloc[i].name, email)
+                update_down_hours_spreadsheet_cell(sheet, COL_EMAIL, df.iloc[i].name, email)
             except Exception as e:
                 print(first_name, last_name, e)
-                update_cell(sheet, COL_EMAIL, df.iloc[i].name, "NOT FOUND")
+                update_down_hours_spreadsheet_cell(sheet, COL_EMAIL, df.iloc[i].name, "NOT FOUND")
 
 
 def delete_file(service, file_id):
@@ -307,6 +310,75 @@ def get_reinstatement_eligibility_suffix(member_first_name, member_last_name):
     return eligibility_suffix, prior_termination_reason
 
 
+def update_15_day_notice_spreadsheet(sheets_service, member_data, date_15days):
+    spreadsheet_id = DOCUMENT_IDS["15_day_notice_spreadsheet"]
+
+    # First, insert a new row after the header row
+    request = {
+        "insertDimension": {
+            "range": {
+                "sheetId": 0,  # Assuming it's the first sheet
+                "dimension": "ROWS",
+                "startIndex": 2,  # Insert after the header row
+                "endIndex": 3,
+            },
+            "inheritFromBefore": False,
+        }
+    }
+    sheets_service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": [request]}).execute()
+
+    # Now, update the newly inserted row with member data
+    COLUMNS_BY_DATA = {
+        "<LAST NAME>": "B",
+        "<FIRST NAME>": "C",
+        "<EMAIL>": "D",
+        "<HOUSE>": "E",
+        "<DATE>": "F",
+        "<DATE (+15 days)>": "G",
+        "<ACTION>": "I",
+    }
+
+    # Prepare the update requests
+    requests = []
+    for data_key, column in COLUMNS_BY_DATA.items():
+        if data_key == "WORKSHIFT":
+            value = "Workshift"
+        elif data_key == "<ACTION>":
+            action = format_data[data_key]
+            if action == POTENTIAL_TERMINATION_ACTION:
+                action = "Potential"
+            elif action == PENDING_TERMINATION_ACTION:
+                action = "Pending"
+            else:
+                raise ValueError(f"Invalid action {action}")
+            value = action
+        else:
+            value = format_data[data_key]
+
+        if value:
+            requests.append(
+                {
+                    "updateCells": {
+                        "range": {
+                            "sheetId": 0,
+                            "startRowIndex": 2,
+                            "endRowIndex": 3,
+                            "startColumnIndex": ord(column) - ord("A"),
+                            "endColumnIndex": ord(column) - ord("A") + 1,
+                        },
+                        "rows": [{"values": [{"userEnteredValue": {"stringValue": str(value)}}]}],
+                        "fields": "userEnteredValue",
+                    }
+                }
+            )
+
+    # Execute all updates in a single batch request
+    if requests:
+        sheets_service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+
+    print(f"Updated 15-day notice spreadsheet for {format_data['<FULL NAME>']}")
+
+
 if __name__ == "__main__":
     creds = get_credentials()
     services = get_google_services(creds)
@@ -330,6 +402,7 @@ if __name__ == "__main__":
         date_15days = (datetime.now() + timedelta(days=15)).strftime("%m/%d/%Y")
         format_data = {
             "<FIRST NAME>": member_first_name,
+            "<LAST NAME>": member_last_name,
             "<FULL NAME>": f"{member_first_name} {member_last_name}",
             "<HOUSE>": house_code,
             "<DATE>": date_today,
@@ -337,6 +410,8 @@ if __name__ == "__main__":
             "<DATE (+15 days)>": date_15days,
             "<SEMESTER, YEAR>": SEMESTER_YEAR,
             "<OPS_SUPERVISOR>": OPS_SUPERVISOR,
+            "<EMAIL>": member_email,
+            "<ACTION>": action,
         }
 
         if action == POTENTIAL_TERMINATION_ACTION:
@@ -391,13 +466,30 @@ if __name__ == "__main__":
             input(
                 f"About to send email to {member_email} and {workshift_manager_email}.\n\nSubject: {subject}\n\nBody:\n{body}\n\nAttachments: {', '.join(os.path.basename(path) for path in pdf_attachments)}\n\nPress Enter to continue"
             )
-        else:
-            assert "{" not in body and "}" not in body, "Body has { or } in it, probably formatting failed"
-            assert "<" not in body and ">" not in body, "Body has < or > in it, which are not formatted properly"
+
+        assert "{" not in body and "}" not in body, "Body has { or } in it, probably formatting failed"
+        assert "<" not in body and ">" not in body, "Body has < or > in it, which are not formatted properly"
+
+        ####################################################
+        # Start doing the actual work that modifies things #
+        ####################################################
+
+        # Update 15 day notice spreadsheet
+        if action == POTENTIAL_TERMINATION_ACTION or action == PENDING_TERMINATION_ACTION:
+            print(f"Updating 15 day notice spreadsheet for {member_first_name} {member_last_name}")
+            update_15_day_notice_spreadsheet(services["sheets"], format_data, date_15days)
+
+        for pdf_path in pdf_attachments:
+            print(f"Uploading {pdf_path} to Google Drive")
+            drive_file_id = upload_to_drive(services["drive"], pdf_path, PDFS_FOLDER_ID)
+            print(f"Uploaded {pdf_path} to Google Drive with file ID: {drive_file_id}")
 
         # Actually send the email
+        print(f"Sending email to {member_email} and {workshift_manager_email}")
         send_email(member_email, [workshift_manager_email], subject, body, pdf_attachments)
-        # Update
+        print("Email sent.")
+
+        # Update down hours spreadsheet
         spreadsheet_items_to_update = {
             COL_HOUSE: house_code,
             COL_LAST_NAME: member_last_name,
@@ -409,4 +501,6 @@ if __name__ == "__main__":
 
         for col, value in spreadsheet_items_to_update.items():
             print(f"Updating {member_first_name} {member_last_name} col {col} to {value}")
-            update_cell(services["sheets"], col, row.name, value)
+            update_down_hours_spreadsheet_cell(services["sheets"], col, row.name, value)
+
+        print(f"Finished everything for {member_first_name} {member_last_name}")

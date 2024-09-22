@@ -2,11 +2,13 @@ import os
 import pickle
 from datetime import datetime
 from pathlib import Path
+from urllib.error import HTTPError
 
 from dotenv import load_dotenv
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
 ENV_FOLDER = Path(__file__).parent / ".env"
 TEMPLATE_FOLDER = Path(__file__).parent / "templates"
@@ -37,6 +39,24 @@ def get_google_services(creds):
     docs_service = build("docs", "v1", credentials=creds)
     drive_service = build("drive", "v3", credentials=creds)
     return {"sheets": sheet_service, "docs": docs_service, "drive": drive_service}
+
+
+def upload_to_drive(drive_service, file_path, folder_id):
+    file_metadata = {"name": os.path.basename(file_path), "parents": [folder_id]}
+    media = MediaFileUpload(file_path, resumable=True)
+
+    try:
+        # First, create the file metadata
+        file = drive_service.files().create(body=file_metadata, fields="id", supportsAllDrives=True).execute()
+
+        # Then, upload the file content
+        drive_service.files().update(fileId=file.get("id"), media_body=media, supportsAllDrives=True).execute()
+
+        print(f'File uploaded successfully. File ID: {file.get("id")}')
+        return file.get("id")
+    except HTTPError as error:
+        print(f"An error occurred while uploading the file: {error}")
+        return None
 
 
 def get_current_semester_year():
