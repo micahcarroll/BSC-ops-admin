@@ -22,3 +22,8 @@ python -m bsc_ops_admin.process_new_entries
 
 # TODOs
 - Add a test that checks all conditions run without errors
+- Add caching of google docs based on last modified time
+- Add cron job that runs this daily (and runs if missed a day). Maybe run every hour and check if the last time it ran was > 1 day ago. Maybe have a MacOS pop up appear when asking user input.
+- Document what/how much of the script is MacOS specific. Definitely have a non-MacOS version that can be run as a python package without cron.
+- Add a schedule-send email after the 15 day notice is up, to ops admin? Or maybe have it schedule a job for 15 days later that checks whether it was done
+- Add better handling of people eligible for reinstatement (ask Alex for a list of terminated people and the reasons why they were terminated). Document how that was obtained.
