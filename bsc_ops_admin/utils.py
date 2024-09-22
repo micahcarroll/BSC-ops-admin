@@ -63,9 +63,10 @@ def get_current_semester_year():
     current_date = datetime.now()
 
     # Define cutoff dates for semesters
-    spring_start = datetime(current_date.year, 1, 1)
-    summer_start = datetime(current_date.year, 5, 15)
-    fall_start = datetime(current_date.year, 8, 15)
+    year = current_date.year
+    spring_start = datetime(year, 1, 1)
+    summer_start = datetime(year, 5, 15)
+    fall_start = datetime(year, 8, 15)
 
     if spring_start <= current_date < summer_start:
         semester = "Spring"
@@ -73,11 +74,5 @@ def get_current_semester_year():
         semester = "Summer"
     else:
         semester = "Fall"
-
-    # Adjust year for Fall semester
-    if semester == "Fall" and current_date.month >= 8:
-        year = current_date.year + 1
-    else:
-        year = current_date.year
 
     return f"{semester} {year}"
