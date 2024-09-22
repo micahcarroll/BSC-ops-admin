@@ -51,6 +51,7 @@ COL_EMAIL = "E"
 COL_HOUSE = "F"
 COL_EXISTING_CC = "H"
 COL_ACTION = "I"
+COL_DATE_ISSUED = "J"
 
 
 def get_down_hours_df(sheets_service, only_action_null=True):
@@ -380,6 +381,24 @@ def update_15_day_notice_spreadsheet(sheets_service, member_data, date_15days):
     print(f"Updated 15-day notice spreadsheet for {format_data['<FULL NAME>']}")
 
 
+def update_down_hours_spreadsheet(
+    sheets_service, house_code, member_first_name, member_last_name, had_prior_CC, action, date_today
+):
+    spreadsheet_items_to_update = {
+        COL_HOUSE: house_code,
+        COL_LAST_NAME: member_last_name,
+        COL_FIRST_NAME: member_first_name,
+        COL_EXISTING_CC: had_prior_CC,
+        COL_ACTION: action,
+        COL_DATE_ISSUED: date_today,
+    }
+    print(f"About to update spreadsheet values: {spreadsheet_items_to_update}")
+
+    for col, value in spreadsheet_items_to_update.items():
+        print(f"Updating {member_first_name} {member_last_name} col {col} to {value}")
+        update_down_hours_spreadsheet_cell(sheets_service, col, row.name, value)
+
+
 if __name__ == "__main__":
     creds = get_credentials()
     services = get_google_services(creds)
@@ -491,17 +510,8 @@ if __name__ == "__main__":
         print("Email sent.")
 
         # Update down hours spreadsheet
-        spreadsheet_items_to_update = {
-            COL_HOUSE: house_code,
-            COL_LAST_NAME: member_last_name,
-            COL_FIRST_NAME: member_first_name,
-            COL_EXISTING_CC: had_prior_CC,
-            COL_ACTION: action,
-        }
-        print(f"About to update spreadsheet values: {spreadsheet_items_to_update}")
-
-        for col, value in spreadsheet_items_to_update.items():
-            print(f"Updating {member_first_name} {member_last_name} col {col} to {value}")
-            update_down_hours_spreadsheet_cell(services["sheets"], col, row.name, value)
+        update_down_hours_spreadsheet(
+            services["sheets"], house_code, member_first_name, member_last_name, had_prior_CC, action, date_today
+        )
 
         print(f"Finished everything for {member_first_name} {member_last_name}")
