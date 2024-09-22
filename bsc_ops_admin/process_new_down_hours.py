@@ -381,9 +381,14 @@ def update_15_day_notice_spreadsheet(sheets_service, format_data):
     print(f"Updated 15-day notice spreadsheet for {format_data['<FULL NAME>']}")
 
 
-def update_down_hours_spreadsheet(
-    sheets_service, row, house_code, member_first_name, member_last_name, had_prior_CC, action, date_today
-):
+def update_down_hours_spreadsheet(sheets_service, row, format_data):
+    house_code = format_data["<HOUSE>"]
+    member_first_name = format_data["<FIRST NAME>"]
+    member_last_name = format_data["<LAST NAME>"]
+    had_prior_CC = format_data["<EXISTING CC>"]
+    action = format_data["<ACTION>"]
+    date_today = format_data["<DATE>"]
+
     spreadsheet_items_to_update = {
         COL_HOUSE: house_code,
         COL_LAST_NAME: member_last_name,
@@ -399,31 +404,9 @@ def update_down_hours_spreadsheet(
         update_down_hours_spreadsheet_cell(sheets_service, col, row.name, value)
 
 
-def process_new_down_hour_entry(services, row, templates, full_df):
-    house_code = get_house_code(row)
-    member_first_name, member_last_name = get_capitalized_names(row)
-    had_prior_CC, member_email = had_prior_conditional_contract(row, full_df)
-    action = get_action(row, had_prior_CC)
-    workshift_manager_email = row["Email Address"].strip()
-
-    print(f"Action for {member_first_name} {member_last_name} is {action}")
-    date_today = datetime.now().strftime("%m/%d/%Y")
-    date_7days = (datetime.now() + timedelta(days=7)).strftime("%m/%d/%Y")
-    date_15days = (datetime.now() + timedelta(days=15)).strftime("%m/%d/%Y")
-    format_data = {
-        "<FIRST NAME>": member_first_name,
-        "<LAST NAME>": member_last_name,
-        "<FULL NAME>": f"{member_first_name} {member_last_name}",
-        "<HOUSE>": house_code,
-        "<DATE>": date_today,
-        "<DATE (+1 week)>": date_7days,
-        "<DATE (+15 days)>": date_15days,
-        "<SEMESTER, YEAR>": SEMESTER_YEAR,
-        "<OPS_SUPERVISOR>": OPS_SUPERVISOR,
-        "<EMAIL>": member_email,
-        "<ACTION>": action,
-    }
-
+def get_email_by_action(action, templates, format_data, services):
+    member_first_name = format_data["<FIRST NAME>"]
+    member_last_name = format_data["<LAST NAME>"]
     if action == POTENTIAL_TERMINATION_ACTION:
         # Get from input whether member is eligible for reinstatement, default to eligible
         eligibility_suffix, prior_termination_reason = get_reinstatement_eligibility_suffix(
@@ -463,22 +446,50 @@ def process_new_down_hour_entry(services, row, templates, full_df):
         pdf_attachments = []
 
         subject, body = get_email_template(templates, action)
+    else:
+        raise ValueError(f"Invalid action {action}")
 
     # Format the body. Wrap all < > with {} in body and then use formatting
     body = body.replace("<", "{<").replace(">", ">}").format_map(format_data)
 
+    assert "{" not in body and "}" not in body, "Body has { or } in it, probably formatting failed"
+    assert "<" not in body and ">" not in body, "Body has < or > in it, which are not formatted properly"
+    return subject, body, pdf_attachments
+
+
+def process_new_down_hour_entry(services, row, templates, full_df):
+    house_code = get_house_code(row)
+    member_first_name, member_last_name = get_capitalized_names(row)
+    had_prior_CC, member_email = had_prior_conditional_contract(row, full_df)
+    action = get_action(row, had_prior_CC)
+    workshift_manager_email = row["Email Address"].strip()
+
+    print(f"Action for {member_first_name} {member_last_name} is {action}")
+    date_today = datetime.now().strftime("%m/%d/%Y")
+    date_7days = (datetime.now() + timedelta(days=7)).strftime("%m/%d/%Y")
+    date_15days = (datetime.now() + timedelta(days=15)).strftime("%m/%d/%Y")
+    format_data = {
+        "<FIRST NAME>": member_first_name,
+        "<LAST NAME>": member_last_name,
+        "<FULL NAME>": f"{member_first_name} {member_last_name}",
+        "<HOUSE>": house_code,
+        "<DATE>": date_today,
+        "<DATE (+1 week)>": date_7days,
+        "<DATE (+15 days)>": date_15days,
+        "<SEMESTER, YEAR>": SEMESTER_YEAR,
+        "<OPS_SUPERVISOR>": OPS_SUPERVISOR,
+        "<EMAIL>": member_email,
+        "<ACTION>": action,
+        "<EXISTING CC>": had_prior_CC,
+    }
+
+    subject, body, pdf_attachments = get_email_by_action(action, templates, format_data, services)
+
     if SAFE_MODE:
-        if action == POTENTIAL_TERMINATION_ACTION:
-            open_pdf_in_preview(cc_pdf)
-            open_pdf_in_preview(potential_termination_pdf)
-        elif action == PENDING_TERMINATION_ACTION:
-            open_pdf_in_preview(pending_termination_pdf)
+        [open_pdf_in_preview(pdf) for pdf in pdf_attachments]
         input(
             f"About to send email to {member_email} and {workshift_manager_email}.\n\nSubject: {subject}\n\nBody:\n{body}\n\nAttachments: {', '.join(os.path.basename(path) for path in pdf_attachments)}\n\nPress Enter to continue"
         )
-
-    assert "{" not in body and "}" not in body, "Body has { or } in it, probably formatting failed"
-    assert "<" not in body and ">" not in body, "Body has < or > in it, which are not formatted properly"
 
     ####################################################
     # Start doing the actual work that modifies things #
@@ -500,14 +511,14 @@ def process_new_down_hour_entry(services, row, templates, full_df):
     print("Email sent.")
 
     # Update down hours spreadsheet
-    update_down_hours_spreadsheet(
-        services["sheets"], row, house_code, member_first_name, member_last_name, had_prior_CC, action, date_today
-    )
+    update_down_hours_spreadsheet(services["sheets"], row, format_data)
 
     print(f"Finished everything for {member_first_name} {member_last_name}")
 
 
-def process_new_down_hour_entries(services):
+def process_new_down_hour_entries():
+    creds = get_credentials()
+    services = get_google_services(creds)
     full_df = get_down_hours_df(services["sheets"], only_action_null=False)
     df = get_down_hours_df(services["sheets"])
     templates = extract_email_templates(services["docs"])
@@ -520,5 +531,4 @@ def process_new_down_hour_entries(services):
 
 
 if __name__ == "__main__":
-    creds = get_credentials()
-    services = get_google_services(creds)
+    process_new_down_hour_entries()

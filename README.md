@@ -29,3 +29,4 @@ python -m bsc_ops_admin.process_new_entries
 - Add better handling of people eligible for reinstatement (ask Alex for a list of terminated people and the reasons why they were terminated). Document how that was obtained.
 - Have an automated email every 2 weeks to workshift managers reminding them to fill out down hours
 - Have member ID be filled in the 15 day notice spreadsheet
+- Have nicer formatting dict, where you automatically add the < > tags around the keys and maybe add underscores for all keys?
