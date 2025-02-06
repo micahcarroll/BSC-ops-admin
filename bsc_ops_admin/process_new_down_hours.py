@@ -1,6 +1,5 @@
 from __future__ import print_function
 
-import io
 import os.path
 import smtplib
 import subprocess
@@ -12,8 +11,21 @@ from email.mime.text import MIMEText
 
 import numpy as np
 import pandas as pd
-from bsc_ops_admin.utils import get_credentials, get_current_semester_year, get_google_services, upload_to_drive
-from googleapiclient.http import MediaIoBaseDownload
+
+from bsc_ops_admin.utils import (
+    get_credentials,
+    get_current_semester_year,
+    get_google_services,
+    retry_google_api,
+    upload_to_drive,
+)
+from bsc_ops_admin.utils_google_api import (
+    copy_drive_file,
+    delete_drive_file,
+    export_google_doc_as_pdf,
+    get_google_doc_content,
+    update_google_doc,
+)
 
 # https://docs.google.com/document/d/1jcCLkLd58psZyZLxnFHAfEpOCuROOslcfz0qMJrAxDI/edit
 DOCUMENT_IDS = {
@@ -71,12 +83,19 @@ def get_down_hours_df(sheets_service, only_action_null=True):
 
     if only_action_null:
         df = df[df["Action"].isnull()]
-        assert len(df) < 5, "Something is fishy, there are more than 5 rows with no action?"
+        num_rows = len(df)
+        if num_rows > 10:
+            proceed = input(
+                f"Warning: There are {num_rows} rows with no action. This seems unusually high. Proceed? (y/n): "
+            )
+            if proceed.lower() != "y":
+                raise ValueError("Aborted due to high number of rows")
 
     df["Member's Down Hours"] = df["Member's Down Hours"].replace("", np.nan).astype(float)
     return df
 
 
+@retry_google_api(max_attempts=5, max_wait=60)
 def update_down_hours_spreadsheet_cell(sheets_service, col, idx, value):
     down_hours_spreadsheet_id = DOCUMENT_IDS["down_hours_spreadsheet"]
     return (
@@ -152,54 +171,25 @@ def find_email_if_not_found(sheet):
                 update_down_hours_spreadsheet_cell(sheet, COL_EMAIL, df.iloc[i].name, "NOT FOUND")
 
 
-def delete_file(service, file_id):
-    try:
-        service.files().delete(fileId=file_id).execute()
-        print(f"File with ID {file_id} has been deleted.")
-    except Exception as e:
-        print(f"An error occurred while deleting the file: {e}")
-
-
 def fill_pdf(services, output_pdf_path, form_data, document_id):
     drive_service, docs_service = services["drive"], services["docs"]
 
     # Create a copy of the document
-    body = {"name": "tmp"}
-    drive_response = drive_service.files().copy(fileId=document_id, body=body).execute()
-    copy_document_id = drive_response.get("id")
+    copy_document_id = copy_drive_file(drive_service, document_id)
 
-    print(f"Created a copy of the document with ID: {copy_document_id}")
-
-    # Retrieve the documents contents from the Docs service.
-    docs_service.documents().get(documentId=copy_document_id).execute()
-
-    # Update the document content
-    requests = []
-    for key, value in form_data.items():
-        requests.append({"replaceAllText": {"containsText": {"text": key, "matchCase": "true"}, "replaceText": value}})
-
-    # Execute the update
-    docs_service.documents().batchUpdate(documentId=copy_document_id, body={"requests": requests}).execute()
+    # Update the google doc copy with the form data
+    update_google_doc(docs_service, copy_document_id, form_data)
 
     # Export the document as PDF
-    request = drive_service.files().export_media(fileId=copy_document_id, mimeType="application/pdf")
-    fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request)
-    done = False
-    while done is False:
-        status, done = downloader.next_chunk()
-        print(f"Download {int(status.progress() * 100)}%.")
+    export_google_doc_as_pdf(drive_service, copy_document_id, output_pdf_path)
 
-    delete_file(drive_service, copy_document_id)
-
-    # Save the PDF
-    fh.seek(0)
-    with open(output_pdf_path, "wb") as f:
-        f.write(fh.getvalue())
+    # Cleanup
+    delete_drive_file(drive_service, copy_document_id)
 
     print(f"PDF form filled and saved as {output_pdf_path}")
 
 
+@retry_google_api(max_attempts=5, max_wait=60)
 def send_email(recipient_email, cc_emails, subject, body, attachment_paths):
     # Email configuration
     sender_email = "opsadmin@bsc.coop"
@@ -227,15 +217,12 @@ def send_email(recipient_email, cc_emails, subject, body, attachment_paths):
         message.attach(part)
 
     # Connect to the SMTP server and send the email
-    try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()
-            server.login(sender_email, sender_password)  # type: ignore
-            server.send_message(message)
-        print(f"Email sent successfully to {recipient_email} with CC to {', '.join(cc_emails)}")
-        print(f"Attachments: {', '.join(os.path.basename(path) for path in attachment_paths)}")
-    except Exception as e:
-        print(f"Error sending email: {e}")
+    with smtplib.SMTP("smtp.gmail.com", 587) as server:
+        server.starttls()
+        server.login(sender_email, sender_password)  # type: ignore
+        server.send_message(message)
+    print(f"Email sent successfully to {recipient_email} with CC to {', '.join(cc_emails)}")
+    print(f"Attachments: {', '.join(os.path.basename(path) for path in attachment_paths)}")
 
 
 def open_pdf_in_preview(pdf_path):
@@ -253,8 +240,7 @@ def extract_email_templates(docs_service):
     template_doc = DOCUMENT_IDS["instruction_docs"]
 
     # Retrieve the document content
-    document = docs_service.documents().get(documentId=template_doc).execute()
-    content = document.get("body").get("content", [])
+    content = get_google_doc_content(docs_service, template_doc)
 
     templates = {}
     current_subject = None
@@ -379,8 +365,6 @@ def update_15_day_notice_spreadsheet(sheets_service, format_data):
     if requests:
         sheets_service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
 
-    print(f"Updated 15-day notice spreadsheet for {format_data['<FULL NAME>']}")
-
 
 def update_down_hours_spreadsheet(sheets_service, row, format_data):
     house_code = format_data["<HOUSE>"]
@@ -489,7 +473,7 @@ def process_new_down_hour_entry(services, row, templates, full_df):
     if SAFE_MODE:
         [open_pdf_in_preview(pdf) for pdf in pdf_attachments]
         input(
-            f"About to send email to {member_email} and {workshift_manager_email}.\n\nSubject: {subject}\n\nBody:\n{body}\n\nAttachments: {', '.join(os.path.basename(path) for path in pdf_attachments)}\n\nPress Enter to continue"
+            f"About to send email to {member_email}, {workshift_manager_email}, and opsadmin@bsc.coop.\n\nSubject: {subject}\n\nBody:\n{body}\n\nAttachments: {', '.join(os.path.basename(path) for path in pdf_attachments)}\n\nPress Enter to continue"
         )
 
     ####################################################
@@ -500,6 +484,7 @@ def process_new_down_hour_entry(services, row, templates, full_df):
     if action == POTENTIAL_TERMINATION_ACTION or action == PENDING_TERMINATION_ACTION:
         print(f"Updating 15 day notice spreadsheet for {member_first_name} {member_last_name}")
         update_15_day_notice_spreadsheet(services["sheets"], format_data)
+        print(f"Updated 15-day notice spreadsheet for {format_data['<FULL NAME>']}")
 
     for pdf_path in pdf_attachments:
         print(f"Uploading {pdf_path} to Google Drive")
@@ -507,8 +492,8 @@ def process_new_down_hour_entry(services, row, templates, full_df):
         print(f"Uploaded {pdf_path} to Google Drive with file ID: {drive_file_id}")
 
     # Actually send the email
-    print(f"Sending email to {member_email} and {workshift_manager_email}")
-    send_email(member_email, [workshift_manager_email], subject, body, pdf_attachments)
+    print(f"Sending email to {member_email}, {workshift_manager_email}, opsadmin@bsc.coop")
+    send_email(member_email, [workshift_manager_email, "opsadmin@bsc.coop"], subject, body, pdf_attachments)
     print("Email sent.")
 
     # Update down hours spreadsheet

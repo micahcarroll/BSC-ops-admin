@@ -8,7 +8,9 @@ from dotenv import load_dotenv
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 ENV_FOLDER = Path(__file__).parent / ".env"
 TEMPLATE_FOLDER = Path(__file__).parent / "templates"
@@ -76,3 +78,12 @@ def get_current_semester_year():
         semester = "Fall"
 
     return f"{semester} {year}"
+
+
+def retry_google_api(max_attempts=5, max_wait=60):
+    return retry(
+        stop=stop_after_attempt(max_attempts),
+        wait=wait_exponential(multiplier=1, max=max_wait),
+        retry=retry_if_exception_type(HttpError),
+        reraise=True,
+    )
