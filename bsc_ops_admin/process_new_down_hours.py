@@ -84,7 +84,7 @@ def get_down_hours_df(sheets_service, only_action_null=True):
     if only_action_null:
         df = df[df["Action"].isnull()]
         num_rows = len(df)
-        if num_rows > 10:
+        if num_rows >= 10:
             proceed = input(
                 f"Warning: There are {num_rows} rows with no action. This seems unusually high. Proceed? (y/n): "
             )
