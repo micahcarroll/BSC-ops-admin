@@ -103,7 +103,7 @@ def update_down_hours_spreadsheet_cell(sheets_service, col, idx, value):
         .values()
         .update(
             spreadsheetId=down_hours_spreadsheet_id,
-            range=f"sheet1!{col}{idx+1}",
+            range=f"sheet1!{col}{idx + 1}",
             valueInputOption="USER_ENTERED",
             body={"values": [[value]], "majorDimension": "COLUMNS"},
         )
@@ -398,7 +398,7 @@ def get_email_by_action(action, templates, format_data, services):
             member_first_name, member_last_name
         )
         if prior_termination_reason is not None:
-            format_data["<PRIOR TERMINATION REASON>"] = prior_termination_reason
+            format_data["<PREVIOUS TERMINATION REASON>"] = prior_termination_reason
 
         document_id = DOCUMENT_IDS["conditional_contract"]
         cc_pdf = f"cc_{member_first_name}_{member_last_name}.pdf"
