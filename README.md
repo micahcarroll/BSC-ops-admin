@@ -13,6 +13,7 @@ Other steps:
 3. Create a `credentials.json` file with the contents of the google api key, and also put it in the `.env` folder.
 4. Make sure `SPREADSHEET_ID`, `POTENTIAL_TERMINATION_NOTICE_DOCUMENT_ID`, `CONDITIONAL_CONTRACT_DOCUMENT_ID`, `OPS_SUPERVISOR`, and `SEMESTER_YEAR` are up to date in `process_new_entries.py`.
 
+You'll have to recreate the `EMAIL_PASSWORD` every semester, using `https://myaccount.google.com/u/0/apppasswords`
 
 ## Running
 

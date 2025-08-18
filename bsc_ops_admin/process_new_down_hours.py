@@ -203,8 +203,10 @@ def send_email(recipient_email, cc_emails, subject, body, attachment_paths):
     message["Subject"] = subject
     message["Cc"] = ", ".join(cc_emails)
 
-    # Add body to email
-    message.attach(MIMEText(body, "plain"))
+    # Add body to email as HTML so the link is processed correctly
+    html_body = body.replace("\n", "<br>")  # Convert newlines to HTML line breaks
+    html_body = f"<div style='font-family: Arial, sans-serif; white-space: pre-line;'>{html_body}</div>"
+    message.attach(MIMEText(html_body, "html"))
 
     # Attach multiple files
     for attachment_path in attachment_paths:
@@ -436,9 +438,25 @@ def get_email_by_action(action, templates, format_data, services):
 
     # Format the body. Wrap all < > with {} in body and then use formatting
     body = body.replace("<", "{<").replace(">", ">}").format_map(format_data)
-
     assert "{" not in body and "}" not in body, "Body has { or } in it, probably formatting failed"
     assert "<" not in body and ">" not in body, "Body has < or > in it, which are not formatted properly"
+
+    # Process any link tags using square brackets [LINK:text|url]
+    while "[LINK:" in body:
+        start = body.find("[LINK:")
+        end = body.find("]", start)
+        if end == -1:
+            break
+
+        link_tag = body[start : end + 1]
+        # Extract text and URL from tag
+        link_content = link_tag[6:-1]  # Remove [LINK: and ]
+        text, url = link_content.split("|")
+
+        # Replace with HTML link for HTML emails
+        body = body.replace(link_tag, f'<a href="{url}">{text}</a>')
+
+    assert "[" not in body and "]" not in body, "Body has [ or ] in it, probably link conversion to HTML failed"
     return subject, body, pdf_attachments
 
 
@@ -454,8 +472,8 @@ def process_new_down_hour_entry(services, row, templates, full_df):
     date_7days = (datetime.now() + timedelta(days=7)).strftime("%m/%d/%Y")
     date_15days = (datetime.now() + timedelta(days=15)).strftime("%m/%d/%Y")
     format_data = {
-        "<FIRST NAME>": member_first_name,
-        "<LAST NAME>": member_last_name,
+        "<FIRST NAME>": member_first_name.strip(),
+        "<LAST NAME>": member_last_name.strip(),
         "<FULL NAME>": f"{member_first_name} {member_last_name}",
         "<HOUSE>": house_code,
         "<DATE>": date_today,
