@@ -15,5 +15,8 @@ dependencies = [
     "python-dotenv",
 ]
 
+[tool.setuptools.dynamic]
+readme = { file = ["README.md"] }
+
 [tool.ruff]
 line-length = 120
