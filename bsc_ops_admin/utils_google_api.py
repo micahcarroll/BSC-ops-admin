@@ -5,13 +5,23 @@ from googleapiclient.http import MediaIoBaseDownload
 from bsc_ops_admin.utils import retry_google_api
 
 
-@retry_google_api(max_attempts=5, max_wait=60)
+# HACK: probably consistently failing to delete the files as of right now because of changes to the google drive api
 def delete_drive_file(drive_service, file_id, verbose=True):
     if verbose:
         print(f"Deleting file with ID: {file_id}")
-    drive_service.files().delete(fileId=file_id).execute()
-    if verbose:
-        print(f"File with ID {file_id} has been deleted.")
+    try:
+        drive_service.files().delete(fileId=file_id, supportsAllDrives=True).execute()
+        if verbose:
+            print(f"File with ID {file_id} has been deleted.")
+    except Exception as e:
+        if "File not found" in str(e) or "notFound" in str(e):
+            if verbose:
+                print(f"File with ID {file_id} was already deleted or not found.")
+        else:
+            # Only retry on non-404 errors
+            if verbose:
+                print(f"Error deleting file: {e}")
+            raise e
 
 
 @retry_google_api(max_attempts=5, max_wait=60)
@@ -21,7 +31,7 @@ def copy_drive_file(drive_service, file_id, verbose=True):
 
     # Setting name of copy to "tmp"
     request_body = {"name": "tmp"}
-    drive_response = drive_service.files().copy(fileId=file_id, body=request_body).execute()
+    drive_response = drive_service.files().copy(fileId=file_id, body=request_body, supportsAllDrives=True).execute()
     copy_document_id = drive_response.get("id")
     if verbose:
         print(f"Created a copy of the document with ID: {copy_document_id}")

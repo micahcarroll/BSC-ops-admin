@@ -27,7 +27,7 @@ from bsc_ops_admin.utils_google_api import (
     update_google_doc,
 )
 
-# https://docs.google.com/document/d/1jcCLkLd58psZyZLxnFHAfEpOCuROOslcfz0qMJrAxDI/edit
+# https://docs.google.com/document/d/1buFyhb4m7hXia-6uH5PI7eipaVsKPsv7u-z14OJxnwM/edit
 DOCUMENT_IDS = {
     "potential_termination_reinstatement_eligible": "1nnFIcC3429tWAq9ihA9ZHv86S78zEPKwht8IT3MLios",
     "potential_termination_reinstatement_ineligible": "1GycmYHjtUybWNmv7M8io1umcfIOUjtAqi1MeetLulpI",
