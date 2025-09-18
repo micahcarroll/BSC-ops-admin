@@ -25,14 +25,27 @@ def get_credentials():
     if os.path.exists(ENV_FOLDER / "token.pickle"):
         with open(ENV_FOLDER / "token.pickle", "rb") as token:
             creds = pickle.load(token)
+
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+            except Exception as e:
+                print(f"Failed to refresh token: {e}")
+                print("Re-authenticating...")
+                # Delete the expired token file
+                if os.path.exists(ENV_FOLDER / "token.pickle"):
+                    os.remove(ENV_FOLDER / "token.pickle")
+                creds = None
+
+        if not creds or not creds.valid:
             flow = InstalledAppFlow.from_client_secrets_file(ENV_FOLDER / "credentials.json", SCOPES)
             creds = flow.run_local_server(port=0)
+
+        # Save the new credentials
         with open(ENV_FOLDER / "token.pickle", "wb") as token:
             pickle.dump(creds, token)
+
     return creds
 
 
@@ -54,7 +67,7 @@ def upload_to_drive(drive_service, file_path, folder_id):
         # Then, upload the file content
         drive_service.files().update(fileId=file.get("id"), media_body=media, supportsAllDrives=True).execute()
 
-        print(f'File uploaded successfully. File ID: {file.get("id")}')
+        print(f"File uploaded successfully. File ID: {file.get('id')}")
         return file.get("id")
     except HTTPError as error:
         print(f"An error occurred while uploading the file: {error}")
